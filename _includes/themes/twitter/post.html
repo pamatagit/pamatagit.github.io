@@ -9,7 +9,7 @@
         <li>{{ page.date | date: " %Y 年 %m 月 %d 日" }}</li>
         <li><i class="fa fa-folder-open"></i></li>
         {% assign post_categories = page.categories %}
-        {% include codepiano/post_categories_info %}
+        {% include site/post_categories_info %}
       </ul>
       {% endunless %}
     </div>
@@ -21,7 +21,7 @@
     <ul id="tag_info" class="tag_box inline">
       <li><i class="fa fa-tags"></i></li>
       {% assign tags_list = page.tags %}
-      {% include codepiano/tags_list %}
+      {% include site/tags_list %}
     </ul>
     {% endunless %}
 
@@ -32,7 +32,7 @@
         {% else %}
         <li class="prev disabled"><a>&larr; 前一篇</a></li>
         {% endif %}
-        <li><a href="{{ BASE_PATH }}{{ site.codepiano.archive_path }}">索引</a></li>
+        <li><a href="{{ BASE_PATH }}{{ site.site.archive_path }}">索引</a></li>
         {% if page.next %}
         <li class="next"><a href="{{ BASE_PATH }}{{ page.next.url }}" title="{{ page.next.title }}">后一篇 &rarr;</a></li>
         {% else %}
@@ -41,7 +41,7 @@
       </ul>
     <br />
     <div id="comment-hook"></div>
-    {% include codepiano/comments %}
+    {% include site/comments %}
   </div>
   <div class="col-md-2"></div>
 </div>
