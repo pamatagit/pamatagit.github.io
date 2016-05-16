@@ -4,7 +4,7 @@ exclude: [".rvmrc", ".rbenv-version", "README.md", "Rakefile", "changelog.md"]
 auto: true
 pygments: true
 # 分页配置，每页最多显示几篇文章
-paginate: 20
+paginate: 6
 
 # 修改为自己的配置
 title : Openstack
