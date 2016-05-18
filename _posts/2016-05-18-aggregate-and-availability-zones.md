@@ -1,9 +1,10 @@
 ---
 layout: post
-date:   2016-5-18
-title:  [转载]HostAggregate 与 AvailabilityZone
+title: [转载]HostAggregate 与 AvailabilityZone
+date: 2016-05-18 22:27:30
 category: "nova"
 ---
+
 转自：[availability-zones-and-host-aggregates](https://blog.russellbryant.net/2013/05/21/availability-zones-and-host-aggregates-in-openstack-compute-nova/ "availability-zones-and-host-aggregates")
 
 Confusion around Host Aggregates and Availabaility Zones in Nova seems to be very common. In this post I’ll attempt to show how each are used. All information in this post is based on the way things work in the Grizzly version of Nova.
