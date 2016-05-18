@@ -26,7 +26,7 @@ Create a host aggregate:
     | 1  | test-aggregate1 | None  |   |  |
     +----+-----------------+-------------------+-------+----------+
 
-{% highlight java %}
+{% highlight %}
 class Foo {
 	void peel(int i) { }
 }
