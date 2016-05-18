@@ -19,12 +19,15 @@ Here is a tour of some commands.
 
 Create a host aggregate:
 
+{% highlight java %}
+
     $ nova aggregate-create test-aggregate1
     +----+-----------------+-------------------+-------+----------+
     | Id | Name| Availability Zone | Hosts | Metadata |
     +----+-----------------+-------------------+-------+----------+
     | 1  | test-aggregate1 | None  |   |  |
     +----+-----------------+-------------------+-------+----------+
+{% highlight java %}
 
 Create a host aggregate that is exposed to users as an availability zone. (This is not creating a host aggregate within an availability zone! It is creating a host aggregate that is the availability zone!)
 
