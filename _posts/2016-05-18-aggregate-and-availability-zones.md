@@ -1,7 +1,7 @@
 ---
 layout: post
 title: HostAggregate 与 AvailabilityZone
-date: 2016-05-18 01:27:30
+date: 2016-05-18
 category: "nova"
 ---
 
