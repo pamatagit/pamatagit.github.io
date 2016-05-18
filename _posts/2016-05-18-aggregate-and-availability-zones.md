@@ -1,15 +1,5 @@
 ---
 layout: post
-title: this的由来和正确的使用方式
-date: 2015-01-01 22:27:30
-category: "java"
----
-
-
-
-
----
-layout: post
 title: [转载]HostAggregate 与 AvailabilityZone
 date: 2016-05-18 22:27:30
 category: "nova"
