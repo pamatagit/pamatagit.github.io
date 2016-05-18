@@ -31,9 +31,17 @@ Create a host aggregate:
 {% highlight java %}
 
 {% highlight java %}
-aaaaaaaaaaaa
-bbbbbbbbbbbb
-cccccccccccc
+class Foo {
+	void peel(int i) { }
+}
+public class FooPeel {
+	public static void main(String [] args) {
+		Foo a = new Foo(),
+			b = new Foo();
+		f1.peel(1);
+		f2.peel(2);
+	}
+}
 {% endhighlight %}
 Create a host aggregate that is exposed to users as an availability zone. (This is not creating a host aggregate within an availability zone! It is creating a host aggregate that is the availability zone!)
 
