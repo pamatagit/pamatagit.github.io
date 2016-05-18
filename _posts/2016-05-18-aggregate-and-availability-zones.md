@@ -13,7 +13,7 @@ First, go ahead and forget everything you know about things called Availability 
 
 The high level view is this: A host aggregate is a grouping of hosts with associated metadata.  A host can be in more than one host aggregate.  The concept of host aggregates is only exposed to cloud administrators.
 
-A host aggregate may be exposed to users in the form of an availability zone. When you create a host aggregate, you have the option of providing an availability zone name. If specified, the host aggregate you have created is now available as an availability zone that can be requested.
+A host aggregate may be exposed to users in the form of an availability zone. When you create a host aggregate, you have the option of providing an availability zone name. If specified, the host aggregate you have created is now available as an availability zone that can be requested.a
 
 Here is a tour of some commands.
 
