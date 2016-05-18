@@ -1,6 +1,6 @@
 ---
 layout: post
-title: [转载]HostAggregate 与 AvailabilityZone
+title: HostAggregate 与 AvailabilityZone
 date: 2016-05-18 22:27:30
 category: "nova"
 ---
