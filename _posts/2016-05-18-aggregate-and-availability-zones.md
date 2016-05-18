@@ -19,16 +19,12 @@ Here is a tour of some commands.
 
 Create a host aggregate:
 
-{% highlight java %}
-
     $ nova aggregate-create test-aggregate1
     +----+-----------------+-------------------+-------+----------+
     | Id | Name| Availability Zone | Hosts | Metadata |
     +----+-----------------+-------------------+-------+----------+
     | 1  | test-aggregate1 | None  |   |  |
     +----+-----------------+-------------------+-------+----------+
-
-{% highlight java %}
 
 {% highlight java %}
 class Foo {
