@@ -2,7 +2,7 @@
 layout: post
 title: openstack对接vmware实验
 date: 2016-06-04
-catagory: "nova","vmware"
+catagory: "nova"
 ---
 ## 原理 ##
 Openstack支持vmware创建虚拟机，实际是通过vmware提供的vCenter服务实现对vmware的控制，通过vmwareapi.VMwareVCDriver驱动调用vCenter的api实现了vmware的资源信息获取和命令控制功能。具体的实现架构如下图所示：
