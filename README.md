@@ -3,7 +3,7 @@
 
 [site](http://site.github.io)
 
-该博客模板转自：codepiano/codepiano.github.com
+该博客模板转自：github.com/codepiano/codepiano.github.com
 
 ## 使用的工具
 
