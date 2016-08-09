@@ -36,6 +36,7 @@ openstack服务中的glance、nova和cinder均可使用vmware后端。
     vmware_store_image_dir = /openstack_glance
 
 需要事先在vmware的ds1中创建`openstack_glance`目录
+
 ### cinder ###
 修改`cinder.conf`:
 
@@ -49,7 +50,9 @@ openstack服务中的glance、nova和cinder均可使用vmware后端。
     vmware_host_username = administrator@vsphere.local
     vmware_host_password = 1qaz@WSX
     vmware_volume_folder = cinder-volumes
+
 如果有多个vcenter，可以在enabled_backends中再加一项"vmware-vmdk-1"，然后新增一个section 【vmware-vmdk-1】，并在该section下配置各个参数。
+
 ### nova ###
 修改nova-compute节点的`nova-compute.conf`:
 
@@ -57,7 +60,7 @@ openstack服务中的glance、nova和cinder均可使用vmware后端。
     #compute_driver=libvirt.LibvirtDriver
     compute_driver=vmwareapi.VMwareVCDriver
     [libvirt]
-	#virt_type=kvm
+    	#virt_type=kvm
     virt_type=vmware
 
 再修改`nova.conf`:

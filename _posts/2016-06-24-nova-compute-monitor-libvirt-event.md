@@ -7,10 +7,11 @@ category: "nova"
 ## 连接libvirt并注册事件 ##
 
 nova-computer服务启动时会加载libvirt驱动，根据配置文件中的libvirt.driver决定。
-> [DEFAULT]
-> compute_driver=libvirt.LibvirtDriver
-> [libvirt]
-> virt_type=kvm
+
+    [DEFAULT]
+    compute_driver=libvirt.LibvirtDriver
+    [libvirt]
+    virt_type=kvm
 
 该驱动的构造函数中会初始化Host类，并连接host的libvirt。
 
@@ -32,6 +33,7 @@ nova-computer服务启动时会加载libvirt驱动，根据配置文件中的lib
                 libvirt.VIR_DOMAIN_EVENT_ID_LIFECYCLE,
                 self._event_lifecycle_callback,
                 self)
+
 这里只注册了libvirt.VIR_DOMAIN_EVENT_ID_LIFECYCLE类型的libvirt事件，并定义了该事件的回调方法_event_lifecycle_callback，该回调方法会将事件信息放入一个evnet_queue。
 
 ## 开始监听libvirt事件  ##
@@ -65,6 +67,7 @@ nova-compute加载完driver之后会调用init_host方法来初始化host，该�
     def _native_thread(self):
         while True:
             libvirt.virEventRunDefaultImpl()
+
 通过一层层调用可以看到最后会起一个_native_thread线程，循环运行libvirt.virEventRunDefaultImpl方法，该方法就是用来监听libvirt事件的，在此之前必须先执行libvirt.virEventRegisterDefaultImpl方法。
 除了监听libvirt事件的线程外，还有一个_dispath_thread，该线程用于读取event_queue中内容。
 
@@ -77,6 +80,7 @@ nova-compute加载完driver之后会调用init_host方法来初始化host，该�
                 event = self._event_queue.get(block=False)
                 if isinstance(event, virtevent.LifecycleEvent):
                     self._event_emit_delayed(event)
+
 最后会调用到_lifecycle_event_handler方法。而该方法是在Host初始化时从libvirtdriver中传过来的，具体的是libvirtdriver的emit_event方法。emit_event方法调用的是_compute_event_callback方法。该方法是在nova-compute执行init_host时赋值的。
 
 	#compute.manager.py
@@ -91,6 +95,7 @@ nova-compute加载完driver之后会调用init_host方法来初始化host，该�
 	#virt.driver.py
     def register_event_listener(self, callback):
         self._compute_event_callback = callback
+
 所以最终处理事件的方法是compute manager的handle_events方法。
 该方法会将libvirt中虚拟机的状态同步到openstack中去。
 
