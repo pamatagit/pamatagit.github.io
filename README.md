@@ -1,9 +1,7 @@
 # 个人博客
 [![Gitter](https://badges.gitter.im/Join Chat.svg)](https://gitter.im/codepiano/codepiano.github.com?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-[site](http://site.github.io)
-
-个人博客，转载请注明出处，保留所有权利。
+该博客模板转自：github.com/codepiano/codepiano.github.com
 
 ## 使用的工具
 
