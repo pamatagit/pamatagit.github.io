@@ -67,7 +67,7 @@ category: "nova"
 
 先看dbdriver的join方法：
 
-{% highlight java %}
+{% highlight python %}
 
     def join(self, member, group, service=None):
         """Add a new member to a service group.
