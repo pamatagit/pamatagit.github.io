@@ -10,6 +10,7 @@ category: "nova"
 通过nova service-list可以查看到nova各个服务的状态，那各个服务状态是up还是down是怎么决定的呢？
 
 跟踪nova service-list的api，该api最终会调用nova/api/openstack/compute/contrib/services.py中ServiceController类的_get_services_list方法获取所有的service列表，然后调用_get_service_detail来判断每个service的状态。
+{% highlight python %}
 
     def _get_service_detail(self, svc, detailed):
         alive = self.servicegroup_api.service_is_up(svc)
@@ -36,7 +37,9 @@ category: "nova"
 
         return svcs
 
+{% endhighlight %}
 在_get_service_detail中会调用servicegroup_api的service_is_up方法来判断服务的状态。
+{% highlight python %}
 
     def service_is_up(self, member):
         """Check if the given member is up."""
@@ -44,12 +47,15 @@ category: "nova"
         # so this doesn't slow down the scheduler
         return self._driver.is_up(member)
 
+{% endhighlight %}
 这里的driver有3种:
+{% highlight python %}
 
 	'db': 'nova.servicegroup.drivers.db.DbDriver',
     'zk': 'nova.servicegroup.drivers.zk.ZooKeeperDriver',
     'mc': 'nova.servicegroup.drivers.mc.MemcachedDriver'
 
+{% endhighlight %}
 默认使用'db'这个driver。使用该driver时，该服务会运行一个周期任务，定时更新数据库中service表的update_at字段。查询服务状态时is_up方法会去比较update_at字段的时间值，与当前时间做比较，看时间间隔是否小于一个设定值，若小于则表明该服务状态正常，就会判断该服务状态为up，反之则为down。
 
 如果要使用'mc'这个driver，则需要在配置文件中添加配置项：
@@ -115,6 +121,7 @@ category: "nova"
 这个join方法通过service.tg.add_timer将_report_state定义为一个定时任务，周期性地执行。该任务会更新数据库中的report_count字段，每次加1.
 
 mcdriver的join方法与dbdriver类似，只是_report_state略有不同。
+{% highlight python %}
 
     def _report_state(self, service):
         """Update the state of this service in the datastore."""
@@ -138,6 +145,7 @@ mcdriver的join方法与dbdriver类似，只是_report_state略有不同。
                 service.model_disconnected = True
                 LOG.exception(_LE('model server went away'))
 
+{% endhighlight %}
 该任务会周期性地更新memcached中service key的值，将其设为当前utc时间。key为topic和host组成，topic为服务名，如nova-scheduler、nova-conductor等，host为该服务所在主机名。
 
 总结：
