@@ -50,7 +50,7 @@ category: "nova"
     'zk': 'nova.servicegroup.drivers.zk.ZooKeeperDriver',
     'mc': 'nova.servicegroup.drivers.mc.MemcachedDriver'
 
-默认使用'db'这个driver。使用这个driver时，该服务会运行一个周期任务，定时更新数据库中service表的update_at字段。查询服务状态时is_up方法会去比较update_at字段的时间值，与当前时间做比较，看时间间隔是否小于一个设定值，若小于则表明该服务状态正常，就会判断该服务状态为up，反之则为down。
+默认使用'db'这个driver。使用该driver时，该服务会运行一个周期任务，定时更新数据库中service表的update_at字段。查询服务状态时is_up方法会去比较update_at字段的时间值，与当前时间做比较，看时间间隔是否小于一个设定值，若小于则表明该服务状态正常，就会判断该服务状态为up，反之则为down。
 
 如果要使用'mc'这个driver，则需要在配置文件中添加配置项：
 
@@ -66,6 +66,8 @@ category: "nova"
 在服务最初启动时，会执行 `self.servicegroup_api.join(self.host, self.topic, self)`，这里的join最终会调用driver的join方法。
 
 先看dbdriver的join方法：
+
+{% highlight java %}
 
     def join(self, member, group, service=None):
         """Add a new member to a service group.
@@ -107,6 +109,8 @@ category: "nova"
             if not getattr(service, 'model_disconnected', False):
                 service.model_disconnected = True
                 LOG.exception(_LE('model server went away'))
+
+{% endhighlight %}
 
 这个join方法通过service.tg.add_timer将_report_state定义为一个定时任务，周期性地执行。该任务会更新数据库中的report_count字段，每次加1.
 
