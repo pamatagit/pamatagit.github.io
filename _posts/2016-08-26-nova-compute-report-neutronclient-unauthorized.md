@@ -33,7 +33,7 @@ category: "nova"
 
         auth_plugin = token_endpoint.Token(CONF.neutron.url, auth_token)
 
-{% endhiglight %}
+{% endhighlight %}
 该plugin会去keystone请求一个token，并用这个token生成一个neutronclient。
 
 之后需要再次生成neutronclient时该plugin会先判断之前获取的token是否过期，若过期则会去keystone重新申请一个token，若未过期则使用先前的token。
@@ -61,5 +61,3 @@ neutronclient调用neutron api时会先去keystone验证其token的有效性，�
 ## 解决方法 ##
 
 同步keystone和compute节点的时间，最好使用ntp服务。
-
-  
