@@ -11,13 +11,13 @@ category: "keystone"
 
 为了兼容v2 api,keystone有一个默认domain，该domain的id是default。在v2 api下创建的用户和项目也都属于该默认domain。
 
-+---------+---------+---------+--------------------+
-| ID      | Name    | Enabled | Description        |
-+---------+---------+---------+--------------------+
-| default | Default | True    | The default domain |
-+---------+---------+---------+--------------------+
-
-
+    +---------+---------+---------+--------------------+
+    | ID  | Name| Enabled | Description|
+    +---------+---------+---------+--------------------+
+    | default | Default | True| The default domain |
+    +---------+---------+---------+--------------------+
+    
+    
 而在使用v2 api进行身份认证时，由于v2中没有域的概念，如果提供的是user_name和project_name，那么keystone会去默认domain中去寻找该user和project。
 
 如果使用用户名和项目名去进行身份认证，keystone会去default这个域中查找该用户和该项目，然后验证其密码和角色。
