@@ -12,9 +12,9 @@ category: "keystone"
 为了兼容v2 api,keystone有一个默认domain，该domain的id是default。在v2 api下创建的用户和项目也都属于该默认domain。
 
     +---------+---------+---------+--------------------+
-    | ID  | Name| Enabled | Description|
+    | ID      | Name    | Enabled | Description        |
     +---------+---------+---------+--------------------+
-    | default | Default | True| The default domain |
+    | default | Default | True    | The default domain |
     +---------+---------+---------+--------------------+
     
     
