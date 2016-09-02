@@ -1,7 +1,7 @@
 ---
 layout: post
 title: novaclient解析nova命令
-date: 2016-08-30
+date: 2016-09-02
 category: "nova"
 ---
 
