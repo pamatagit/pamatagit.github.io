@@ -20,14 +20,19 @@ fernet是keystone中除了uuid、pki/pkiz外的另一种形式的token，它使�
 在keystone.conf中配置：
 
 > [token]
+> 
 > provider = keystone.token.providers.fernet.Provider
 > 
 > [fernet_token]
+> 
 > key_repository = /etc/keystone/fernet-keys/
+> 
 > max_active_keys = 3
 
 然后执行：
+
 > $ mkdir /etc/keystone/fernet-keys/
+> 
 > $ keystone-manage fernet_setup
 
 这样会在/etc/keystone/fernet-keys/目录下产生key文件。
