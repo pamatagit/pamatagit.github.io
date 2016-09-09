@@ -33,23 +33,19 @@ category: "nova"
 
 从 源码 可以看出，Nova 每分钟统计一次资源，方式如下：
 
-- CPU
-- 
-- vcpus: libvirt 中 get_Info()
-- vcpu_used: 通过 libvirt 中 dom.vcpus() 从而统计该节点上所有虚拟机 vcpu 总和
-- RAM
-- 
-- memory: libvirt 中 get_Info()
-- memory_mb_used：先通过 /proc/meminfo 统计可用内存， 再用总内存减去可用内存得出(资源再统计时会重新计算该值)
-- DISK
-- 
-- local_gb: os.statvfs(CONF.instances_path)
-- local_gb_used: os.statvfs(CONF.instances_path)(资源再统计时会重新计算该值)
-- 其它
-- 
-- hypervisor 相关信息：均通过 libvirt 获取
-- PCI: libvirt 中 listDevices(‘pci’, 0)
-- NUMA: livirt 中 getCapabilities()
+- CPU：
+	- vcpus: libvirt 中 get_Info()
+	- vcpu_used: 通过 libvirt 中 dom.vcpus() 从而统计该节点上所有虚拟机 vcpu 总和
+- RAM：
+	- memory: libvirt 中 get_Info()
+	- memory_mb_used：先通过 /proc/meminfo 统计可用内存， 再用总内存减去可用内存得出(资源再统计时会重新计算该值)
+- DISK：
+	- local_gb: os.statvfs(CONF.instances_path)
+	- local_gb_used: os.statvfs(CONF.instances_path)(资源再统计时会重新计算该值)
+- 其它：
+	- hypervisor 相关信息：均通过 libvirt 获取
+	- PCI: libvirt 中 listDevices(‘pci’, 0)
+	- NUMA: livirt 中 getCapabilities()
 
 
 那么问题来了，按照上述收集资源的方式，free_ram_mb, free_disk_gb 不可能为负数啊！别急，Nova-compute 在上报资源至数据库前，还根据该节点上的虚拟机又做了一次资源统计。
