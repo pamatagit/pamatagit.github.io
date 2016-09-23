@@ -1,7 +1,7 @@
 ---
 layout: post
 title: keystone对接openldap
-date: 2016-09-20
+date: 2016-09-21
 category: "keystone","ldap"
 ---
 
