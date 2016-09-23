@@ -1,7 +1,7 @@
 ---
 layout: post
 title: token的生成与验证
-date: 2016-08-26
+date: 2016-09-10
 category: "keystone"
 ---
 
