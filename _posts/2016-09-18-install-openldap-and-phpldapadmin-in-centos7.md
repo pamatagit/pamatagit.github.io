@@ -93,7 +93,6 @@ category: "ldap"
     olcAccess: {2}to * by dn="cn=Manager,dc=srv,dc=world" write by * read
     
     [root@dlp ~]# ldapmodify -Y EXTERNAL -H ldapi:/// -f chdomain.ldif 
-    
     SASL/EXTERNAL authentication started
     SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
     SASL SSF: 0
