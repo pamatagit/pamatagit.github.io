@@ -2,7 +2,7 @@
 layout: post
 title: keystone对接openldap
 date: 2016-09-21
-category: "keystone","ldap"
+category: "keystone""ldap"
 ---
 
 # 配置keystone实用openldap #
