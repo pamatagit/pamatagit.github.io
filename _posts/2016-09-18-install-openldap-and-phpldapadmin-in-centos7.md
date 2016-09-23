@@ -10,25 +10,32 @@ category: "ldap"
 
 ## 安装openldap server ##
 > [root@dlp ~]# yum -y install openldap-servers openldap-clients
+> 
 > [root@dlp ~]# cp /usr/share/openldap-servers/DB_CONFIG.example /var/lib/ldap/DB_CONFIG 
+> 
 > [root@dlp ~]# chown ldap. /var/lib/ldap/DB_CONFIG 
+> 
 > [root@dlp ~]# systemctl start slapd 
+> 
 > [root@dlp ~]# systemctl enable slapd 
 
 ## 设置openldap管理密码 ##
 
 > [root@dlp ~]# slappasswd 
+> 
 > New password:
 > Re-enter new password:
 > {SSHA}xxxxxxxxxxxxxxxxxxxxxxxx
 > 
 > [root@dlp ~]# vi chrootpw.ldif
+> 
 >  dn: olcDatabase={0}config,cn=config
 > changetype: modify
 > add: olcRootPW
 > olcRootPW: {SSHA}xxxxxxxxxxxxxxxxxxxxxxxx
 > 
 > [root@dlp ~]# ldapadd -Y EXTERNAL -H ldapi:/// -f chrootpw.ldif 
+> 
 > SASL/EXTERNAL authentication started
 > SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
 > SASL SSF: 0
@@ -37,33 +44,39 @@ category: "ldap"
 ## 导入基础架构 ##
 
 > [root@dlp ~]# ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/cosine.ldif
+> 
 > SASL/EXTERNAL authentication started
 > SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
 > SASL SSF: 0
 > adding new entry "cn=cosine,cn=schema,cn=config"
 > 
-> [root@dlp ~]#ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/nis.ldif 
+> [root@dlp ~]#ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/nis.ldif
+>  
 > SASL/EXTERNAL authentication started
 > SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
 > SASL SSF: 0
 > adding new entry "cn=nis,cn=schema,cn=config"
 > 
 > [root@dlp ~]#ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/inetorgperson.ldif 
+> 
 > SASL/EXTERNAL authentication started
 > SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
 > SASL SSF: 0
 > adding new entry "cn=inetorgperson,cn=schema,cn=config"
 
 ## 创建域 ##
+
 ### 生成openldap管理员密码 ###
 
 > [root@dlp ~]# slappasswd 
+> 
 > New password:
 > Re-enter new password:
 > {SSHA}xxxxxxxxxxxxxxxxxxxxxxxx
 
 ### 创建openldap域管理员 ###
 > [root@dlp ~]# vi createdomain.ldif
+> 
 > dn: olcDatabase={1}monitor,cn=config
 > changetype: modify
 > replace: olcAccess
@@ -92,6 +105,7 @@ category: "ldap"
 > olcAccess: {2}to * by dn="cn=Manager,dc=srv,dc=world" write by * read
 
 > [root@dlp ~]# ldapmodify -Y EXTERNAL -H ldapi:/// -f chdomain.ldif 
+> 
 > SASL/EXTERNAL authentication started
 > SASL username: gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth
 > SASL SSF: 0
@@ -102,6 +116,7 @@ category: "ldap"
 
 ### 创建域及组织单元 ###
 > [root@dlp ~]# vi basedomain.ldif
+> 
 > dn: dc=srv,dc=world
 > objectClass: top
 > objectClass: dcObject
@@ -118,14 +133,16 @@ category: "ldap"
 > ou: Groups
 > 
 > [root@dlp ~]#ldapadd -x -D cn=Manager,dc=srv,dc=world -W -f basedomain.ldif 
-> Enter LDAP Password:      # directory manager's password
+> 
+> Enter LDAP Password:
 > adding new entry "dc=srv,dc=world"
 > adding new entry "ou=People,dc=srv,dc=world"
 > adding new entry "ou=Group,dc=srv,dc=world"
 
 ### 验证 ###
 > [root@dlp ~]#ldapsearch -x –W -D cn=Manager,dc=srv,dc=world –b dc=srv,dc=world
-> Enter LDAP Password:      # directory manager's password
+> 
+> Enter LDAP Password:
 > dn: dc=srv,dc=world
 > objectClass: top
 > objectClass: dcObject
@@ -142,9 +159,10 @@ category: "ldap"
 > ou: Groups
 
 ## 打开防火墙 ##
-> [root@dlp ~]#firewall-cmd --add-service=ldap --permanent 
+> [root@dlp ~]#firewall-cmd --add-service=ldap --permanent
 > success
-> [root@dlp ~]# firewall-cmd --reload 
+> 
+> [root@dlp ~]# firewall-cmd --reload
 > Success
 
 # 安装和配置phpldapadmin #
@@ -153,12 +171,15 @@ category: "ldap"
 
 ## 添加epel源 ##
 > [root@dlp ~]#vi /etc/yum.repos.d/epel.repo
+> 
 > [epel]
 > name=epel
 > baseurl=http://ftp.jaist.ac.jp/pub/Linux/Fedora/epel//7/x86_64/
 > gpgcheck=0
 > priority=1
+> 
 > [root@dlp ~]# yum clean all
+> 
 > [root@dlp ~]# yum makecache
 
 ## 安装phpldapadmin ##
@@ -170,13 +191,18 @@ category: "ldap"
 > // $servers->setValue('login','attr','uid');
 > 
 > [root@dlp ~]# vi /etc/httpd/conf.d/phpldapadmin.conf
+> 
 > Require all granted  > # line 12: add access permission
 > 
 > [root@dlp ~]# systemctl restart httpd 
 
 ## 设置允许通过httpd访问ldap ##
 > [root@dlp ~]# getsebool httpd_can_connect_ldap
+> 
 > httpd_can_connect_ldap -->off
+> 
 > [root@dlp ~]# setsebool -P httpd_can_connect_ldap on
+> 
 > [root@dlp ~]# getsebool httpd_can_connect_ldap
+> 
 > httpd_can_connect_ldap -->on
