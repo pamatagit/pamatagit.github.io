@@ -9,15 +9,11 @@ category: "ldap"
 ----------
 
 ## 安装openldap server ##
-> [root@dlp ~]# yum -y install openldap-servers openldap-clients
-> 
-> [root@dlp ~]# cp /usr/share/openldap-servers/DB_CONFIG.example /var/lib/ldap/DB_CONFIG 
-> 
-> [root@dlp ~]# chown ldap. /var/lib/ldap/DB_CONFIG 
-> 
-> [root@dlp ~]# systemctl start slapd 
-> 
-> [root@dlp ~]# systemctl enable slapd 
+    [root@dlp ~]# yum -y install openldap-servers openldap-clients
+    [root@dlp ~]# cp /usr/share/openldap-servers/DB_CONFIG.example /var/lib/ldap/DB_CONFIG 
+    [root@dlp ~]# chown ldap. /var/lib/ldap/DB_CONFIG 
+    [root@dlp ~]# systemctl start slapd 
+    [root@dlp ~]# systemctl enable slapd 
 
 ## 设置openldap管理密码 ##
 
