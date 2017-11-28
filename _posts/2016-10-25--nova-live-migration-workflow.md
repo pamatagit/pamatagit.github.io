@@ -1,0 +1,608 @@
+---
+layout: post
+title: nova live migration workflow
+date: 2016-10-25
+category: "nova"
+---
+
+# api
+
+live-migration请求的body为：
+
+> {"os-migrateLive": {"disk_over_commit": false, "block_migration": false, "host": "jycompute45"}}
+
+入口为：
+
+```python
+#nova/api/openstack/compute/contrib/admin_actions.py
+class AdminActionsController(wsgi.Controller):
+	@wsgi.action('os-migrateLive')
+    def _migrate_live(self, req, id, body):
+        """Permit admins to (live) migrate a server to a new host."""
+```
+nova-api收到请求后，执行以下操作：
+
+* 确认虚机vm_state为active或paused，task_state为None，且虚机未被锁定或用户为admin;
+* 将虚拟机task_state设为migrating，且在数据库中为该instance创建一条live migration action记录；
+* 给nova-conductor发送rpc请求
+
+```python
+#nova/compute/api.py
+class API():
+    @check_instance_lock
+    @check_instance_cell
+    @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.PAUSED])
+    def live_migrate(self, context, instance, block_migration,
+                     disk_over_commit, host_name):
+        """Migrate a server lively to a new host."""
+        LOG.debug("Going to try to live migrate instance to %s",
+                  host_name or "another host", instance=instance)
+
+        instance.task_state = task_states.MIGRATING
+        instance.save(expected_task_state=[None])
+
+        self._record_action_start(context, instance,
+                                  instance_actions.LIVE_MIGRATION)
+
+        self.compute_task_api.live_migrate_instance(context, instance,
+                host_name, block_migration=block_migration,
+                disk_over_commit=disk_over_commit)
+
+#nova/conductor/api.py
+class ComputeTaskAPI():
+    def live_migrate_instance(self, context, instance, host_name,
+                              block_migration, disk_over_commit):
+        scheduler_hint = {'host': host_name}
+        self.conductor_compute_rpcapi.migrate_server(
+            context, instance, scheduler_hint, True, False, None,
+            block_migration, disk_over_commit, None)
+```
+
+# conductor
+
+* 通过传进来的参数判断该请求是热迁移
+
+```python
+#nova/conductor/manager.py
+class ComputeTaskManager():
+    def migrate_server(self, ...):
+		...
+        if live and not rebuild and not flavor:
+            self._live_migrate(context, instance, scheduler_hint,
+                               block_migration, disk_over_commit)
+            
+    def _live_migrate(self,...):
+        try:
+            live_migrate.execute(context, instance, destination,
+                             block_migration, disk_over_commit)
+
+#nova/conductor/tasks/live_migrate.py
+def execute(context, instance, destination,
+            block_migration, disk_over_commit):
+    task = LiveMigrationTask(context, instance,
+                             destination,
+                             block_migration,
+                             disk_over_commit)
+    return task.execute()
+```
+
+构建一个热迁移任务，然后执行。
+
+```python
+#nova/conductor/tasks/live_migrate.py
+class LiveMigrationTask(object):
+    def execute(self):
+        self._check_instance_is_active() #确认虚机状态
+        self._check_host_is_up(self.source) #确认源主机服务状态
+
+        if not self.destination:
+            self.destination = self._find_destination()
+        else:
+            ##################################
+            self._check_requested_destination()
+
+        return self.compute_rpcapi.live_migration(self.context,
+                host=self.source,
+                instance=self.instance,
+                dest=self.destination,
+                block_migration=self.block_migration,
+                migrate_data=self.migrate_data)
+    
+    
+    def _check_requested_destination(self):
+        self._check_destination_is_not_source()
+        self._check_host_is_up(self.destination)
+        self._check_destination_has_enough_memory()
+        self._check_compatible_with_source_hypervisor(self.destination)
+        self._call_livem_checks_on_host(self.destination)
+        
+    def _call_livem_checks_on_host(self, destination):
+        self.migrate_data = self.compute_rpcapi.\
+            check_can_live_migrate_destination(self.context, self.instance,
+                destination, self.block_migration, self.disk_over_commit)
+```
+
+若未指定目标主机，则通过nova-scheduler选取一个目标主机。
+
+若指定了目标主机，则需要确认该主机满足以下条件：
+
+2.1 不是源主机
+
+2.2 nova-compute服务正常
+
+2.3 内存足够
+
+2.4 hypervisor类型
+
+与源主机hypervisor类型相同，且hypervisor版本不低于源主机
+
+## *check_can_live_migrate_destination*
+
+通过rpc，在目标节点执行该方法。
+
+2.5.1 compare_cpu
+
+cpu类型需要兼容虚拟机
+
+2.5.2 创建临时文件
+
+临时文件用来判断虚机路径是否共享，即is_shared_instance_path
+
+### check_can_live_migrate_source
+
+在源节点执行，确认是否块迁移.
+
+> {'is_shared_instance_path': False, 
+>
+> 'block_migration': False, 
+>
+> 'is_shared_storage': False, 
+>
+> 'is_volume_backed': True,
+>
+> 'is_shared_block_storage': True}
+
+2.5.4清理临时文件
+
+# compute:live_migration
+
+源节点nova-compute收到cast请求后，马上给目标节点nova-compute发送要给call请求，执行pre_live_migration。
+
+```python
+#nova/compute/manager.py
+class ComputeManager():
+    def live_migration(self, context, dest, instance, block_migration,
+                       migrate_data):
+        if not isinstance(instance, obj_base.NovaObject):
+            expected = ['metadata', 'system_metadata',
+                        'security_groups', 'info_cache']
+            instance = objects.Instance._from_db_object(
+                context, objects.Instance(), instance,
+                expected_attrs=expected)
+
+        # Create a local copy since we'll be modifying the dictionary
+        migrate_data = dict(migrate_data or {})
+        try:
+            if block_migration:
+                block_device_info = self._get_instance_block_device_info(
+                    context, instance)
+                disk = self.driver.get_instance_disk_info(
+                    instance, block_device_info=block_device_info)
+            else:
+                disk = None
+
+            ############################################################
+            pre_migration_data = self.compute_rpcapi.pre_live_migration(
+                context, instance,
+                block_migration, disk, dest, migrate_data)
+            migrate_data['pre_live_migration_result'] = pre_migration_data
+
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.exception(_LE('Pre live migration failed at %s'),
+                              dest, instance=instance)
+                self._rollback_live_migration(context, instance, dest,
+                                              block_migration, migrate_data)
+
+        # Executing live migration
+        # live_migration might raises exceptions, but
+        # nothing must be recovered in this version.
+        self.driver.live_migration(context, instance, dest,
+                                   self._post_live_migration,
+                                   self._rollback_live_migration,
+                                   block_migration, migrate_data)
+```
+
+## * *pre_live_migration*
+
+该方法是在目标节点执行。
+
+pre_live_migration执行了以下几点：
+
+```python
+#nova/compute/compute.manager.py
+def pre_live_migration(self, context, instance, block_migration, disk,
+                       migrate_data):
+    ##获取block_device_info
+    block_device_info = self._get_instance_block_device_info(
+                        context, instance, refresh_conn_info=True)
+
+    ##获取network_info
+    network_info = self._get_instance_nw_info(context, instance)
+    self._notify_about_instance_usage(
+                 context, instance, "live_migration.pre.start",
+                 network_info=network_info)
+
+    ##准备instance path、映射卷、plug_vif
+    pre_live_migration_data = self.driver.pre_live_migration(context,
+                                   instance,
+                                   block_device_info,
+                                   network_info,
+                                   disk,
+                                   migrate_data)
+
+    ##创建网络
+    self.network_api.setup_networks_on_host(context, instance,
+                                                     self.host)
+
+    ##准备防火墙规则
+    self.driver.ensure_filtering_rules_for_instance(instance,
+                                        network_info)
+
+    self._notify_about_instance_usage(
+                 context, instance, "live_migration.pre.end",
+                 network_info=network_info)
+
+    return pre_live_migration_data
+```
+
+### *block_device_info*
+
+获取block_device_info时，首先获取bdms。
+
+bdms包括哪些信息呢？看看数据库中保存了哪些信息：
+
+![block_device_mapping](F:\private\blog\_posts\image\block_device_mapping.png)
+
+主要包括：
+
+* source type，有image、snapshot、volume
+* dest type，有local、volume
+* bus，有virtio、lxc
+* device type，有disk、cdrom
+* device name，比如/dev/vda、/dev/vdb
+* bootindex，启动顺序，为0时表示是启动盘
+* delete_on_termination，dest type为local时，默认删除虚机时同时删除该磁盘
+* connection_info，从image启动时，该值为空，从卷启动时，包含的是底层存储如何连接该卷所需信息。
+
+通过image启动时，bdm为：source_type=image，destination_type=local，device_type=disk，image_id=imageid，delete_on_termination=1，boot_indext=0。
+
+通过volume启动时，bdm为：source_type=volume，destination_type=volume，device_type=disk，volume_id=volume_id，delete_on_termination=0，boot_index=0。
+
+用ceph时，connection_info为：
+
+> {"driver_volume_type": "rbd", "serial": "95f49f71-d098-4f45-9ef1-84f3ef1fa2dd", "data": {"secret_type": "ceph", "name": "volumes/volume-95f49f71-d098-4f45-9ef1-84f3ef1fa2dd", "secret_uuid": "92451c40-9c6e-4b86-bba1-c8a3b68dc907", "qos_specs": null, "hosts": ["10.0.202.1"], "auth_enabled": true, "access_mode": "rw", "auth_username": "cinder", "ports": ["6789"]}}
+
+获取到bdms后，通过bmds得到swap、ephemerals、block_device_mapping，然后组装起来得到block_device_info：
+
+> {'
+>
+> ​	swap': swap,
+>  	'root_device_name': root_device_name,
+>  	'ephemerals': ephemerals,
+> ​	'block_device_mapping': block_device_mapping
+>
+> }
+
+### *network_info*
+
+这里会调用neutron api，获取该虚机所有端口的信息。
+
+端口信息包括IP、MAC地址、gateway、route、dns、cidr、gateway以及绑在哪个bridge上等ovs底层信息。
+
+### *instance path*
+
+首先判断instance path是否存在，若存在则报错返回，若不存在则创建该目录。
+
+并且，对于非共享存储，需要确保虚机镜像存在，因为需要用该镜像作为backing file。若不存在，则需从glance下载该镜像。
+
+### *connect_volume*
+
+对每个bdm，从block_device_mapping中获取connection_info和disk_info。disk_info如下：
+
+> {'bus': u'virtio', 'boot_index': '1', 'type': u'disk', 'dev': u'vda'}
+
+获取了这些信息后，调用后端驱动，执行connect_volume。
+
+对于image和ceph上的volume，connect_volume不执行任何操作。
+
+对于fc上的volume，会将磁盘映射到目标主机上，并更新connection_info。
+
+### *plug_vifs*
+
+对于ovs端口，最终会调用_plug_bridge_with_port。
+
+```python
+def _plug_bridge_with_port(self, instance, vif, port):
+    iface_id = self.get_ovs_interfaceid(vif)
+    br_name = self.get_br_name(vif['id'])
+    v1_name, v2_name = self.get_veth_pair_names(vif['id'])
+
+    if not linux_net.device_exists(br_name):
+        utils.execute('brctl', 'addbr', br_name, run_as_root=True)
+        utils.execute('brctl', 'setfd', br_name, 0, run_as_root=True)
+        utils.execute('brctl', 'stp', br_name, 'off', run_as_root=True)
+        utils.execute('tee',
+                      ('/sys/class/net/%s/bridge/multicast_snooping' %
+                       br_name),
+                      process_input='0',
+                      run_as_root=True,
+                      check_exit_code=[0, 1])
+
+    if not linux_net.device_exists(v2_name):
+        linux_net._create_veth_pair(v1_name, v2_name)
+        utils.execute('ip', 'link', 'set', br_name, 'up', run_as_root=True)
+        utils.execute('brctl', 'addif', br_name, v1_name, run_as_root=True)
+        if port == 'ovs':
+            linux_net.create_ovs_vif_port(self.get_bridge_name(vif),
+                                          v2_name, iface_id,
+                                          vif['address'], instance.uuid)
+        elif port == 'ivs':
+            linux_net.create_ivs_vif_port(v2_name, iface_id,
+                                          vif['address'], instance.uuid)
+```
+
+这里会创建一个ovs bridge，命名以`qbr`开头，然后创建veth pair，以qvo和qvb开头。
+
+然后将该bridge连接到br-int上。
+
+### *setup_networks_on_host*
+
+使用neutron时，该方法为空，不执行任何操作
+
+3.1.7返回数据给源节点
+
+返回pre_live_migration_data给源节点，包括vnc和spice监听接口，以及更新后的connection_info和disk_info。
+
+```json
+{   
+	"graphics_listen_addrs": {
+        "spice": "127.0.0.1",
+        "vnc": "0.0.0.0"
+    },
+    "volume": {
+        "95f49fef1fa2dd": {
+            "connection_info": {
+                "data": {
+                    "access_mode": "rw",
+                    "auth_enabled": "True",
+                    "auth_username": "cinder",
+                    "hosts": [
+                        "10.0.202.1"
+                    ]
+                },
+                "driver_volume_type": "rbd",
+                "serial": "95f49fef1fa2dd"
+            },
+            "disk_info": {
+                "boot_index": "1",
+                "bus": "virtio",
+                "dev": "vda",
+                "type": "disk"
+            }
+        }
+    }
+}
+```
+
+## * _live_migration_operation
+
+```python
+#nova/compute/manager.py
+	def live_migration(***):
+    	...
+        #_post_live_migration是在源节点迁移完成后执行
+		#_rollback_live_migration是在迁移出错时回滚用
+        self.driver.live_migration(context, instance, dest,
+                                   self._post_live_migration,
+                                   self._rollback_live_migration,
+                                   block_migration, migrate_data)
+
+#nova/virt/libvirt/driver.py
+    def live_migration(self, context, instance, dest,
+                       post_method, recover_method, block_migration=False,
+                       migrate_data=None):
+        if not libvirt_utils.is_valid_hostname(dest):
+            raise exception.InvalidHostname(hostname=dest)
+
+        utils.spawn(self._live_migration, context, instance, dest,
+                          post_method, recover_method, block_migration,
+                          migrate_data)
+        
+    def _live_migration(self, context, instance, dest, post_method,
+                        recover_method, block_migration,
+                        migrate_data):
+        dom = self._host.get_domain(instance)
+
+        opthread = utils.spawn(self._live_migration_operation,
+                                     context, instance, dest,
+                                     block_migration,
+                                     migrate_data, dom)
+
+        finish_event = eventlet.event.Event()
+
+        def thread_finished(thread, event):
+            LOG.debug("Migration operation thread notification",
+                      instance=instance)
+            event.send()
+        opthread.link(thread_finished, finish_event)
+
+        # Let eventlet schedule the new thread right away
+        time.sleep(0)
+
+        try:
+            LOG.debug("Starting monitoring of live migration",
+                      instance=instance)
+            #####
+            self._live_migration_monitor(context, instance, dest,
+                                         post_method, recover_method,
+                                         block_migration, migrate_data,
+                                         dom, finish_event)
+        except Exception as ex:
+            LOG.warn(_LW("Error monitoring migration: %(ex)s"),
+                     {"ex": ex}, instance=instance, exc_info=True)
+            raise
+        finally:
+            LOG.debug("Live migration monitoring is all done",
+                      instance=instance)
+```
+
+具体的迁移过程是在_live_migration_operation中完成的，源节点会另起一个线程来执行该方法。
+
+_live_migration_operation主要就是调用libvirt的迁移接口执行迁移。
+
+## *_live_migration_monitor
+
+通过查询libvirt底层状态来监控迁移完成情况。
+
+## * _post_live_migration
+
+在检测到迁移过程执行完了之后，会调用_post_live_migration。
+
+### disconnect_volume
+
+首先会执行disconnect_volume。
+
+对于ceph，该方法不会做任何操作。但是对于fc，该方法会删除源主机上的device、multipath，也会把netapp上的lun映射移除。
+
+```python
+#nova/virt/libvirt/volume.py
+    def disconnect_volume(self, connection_info, mount_device):
+        """Detach the volume from instance_name."""
+		...
+        for device in devices:
+            linuxscsi.remove_device(device['device'])
+        if use_multipath:
+            linuxscsi.flush_multipath_device(multipath_id)
+            # linuxscsi.remove_dm_device(multipath_id)
+        if platform.machine() in (arch.S390, arch.S390X):
+            self._remove_lun_from_s390(connection_info)
+```
+
+### terminate_connection
+
+调用cinder api，对每个volume执行terminate_connection。对于ceph后端的volume，该方法不执行任何操作。
+
+### unplug_vifs
+
+在源主机删除之前虚拟机所使用的网络接口，包括bridge、veth pair。
+
+### *post_live_migration_at_destination*
+
+该方法是在libvirt底层迁移完成后，在目标节点执行的操作，主要是数据库的更新。
+
+#### *setup_networks_on_host*
+
+这是第二次在目标节点上调用该方法了。
+
+#### *update_port*
+
+```python
+#nova/compute/manager.py
+        self.network_api.migrate_instance_finish(context, instance, migration)
+    
+#nova/network/neutronv2/api.py
+    def migrate_instance_finish(self, context, instance, migration):
+        """Finish migrating the network of an instance."""
+        self._update_port_binding_for_instance(context, instance,
+                                               migration['dest_compute'])
+        
+    def _update_port_binding_for_instance(self, context, instance, host):
+        if not self._has_port_binding_extension(context, refresh_cache=True):
+            return
+        neutron = get_client(context, admin=True)
+        search_opts = {'device_id': instance.uuid,
+                       'tenant_id': instance.project_id}
+        data = neutron.list_ports(**search_opts)
+        ports = data['ports']
+        for p in ports:
+            # If the host hasn't changed, like in the case of resizing to the
+            # same host, there is nothing to do.
+            if p.get('binding:host_id') != host:
+                try:
+                    neutron.update_port(p['id'],
+                                        {'port': {'binding:host_id': host}})
+                except Exception:
+                    with excutils.save_and_reraise_exception():
+                        LOG.exception(_LE("Unable to update host of port %s"),
+                                      p['id'])
+```
+
+这里会调用neutron api，将port的binding:host_id属性从源节点更新到控制节点。
+
+#### *defineXML*
+
+```python
+def post_live_migration_at_destination(self, context,
+                                       instance,
+                                       network_info,
+                                       block_migration=False,
+                                       block_device_info=None):
+    # Define migrated instance, otherwise, suspend/destroy does not work.
+    dom_list = self._conn.listDefinedDomains()
+    if instance.name not in dom_list:
+        image_meta = utils.get_image_from_system_metadata(
+            instance.system_metadata)
+        # In case of block migration, destination does not have
+        # libvirt.xml
+        disk_info = blockinfo.get_disk_info(
+            CONF.libvirt.virt_type, instance,
+            image_meta, block_device_info)
+        xml = self._get_guest_xml(context, instance,
+                                  network_info, disk_info,
+                                  image_meta,
+                                  block_device_info=block_device_info,
+                                  write_to_disk=True)
+        self._conn.defineXML(xml)
+```
+
+获取network_info和block_device_info，_get_guest_xml方法会组合新的xml，并在instance_path下创建libvirt.xml文件。
+
+然后调用libvirt接口defineXML。
+
+这段代码没有弄太懂。
+
+按正常的逻辑，listDefinedDomain应该返回已经存在的虚机，然后如果迁移过来的虚机不存在，则通过xml文件define一次，生成虚机。但是：
+
+1.listDefinedDomian返回的是libvirt底层shutoff状态的虚机
+
+2.此时热迁移过来的虚机已经存在，且是running状态的，但代码里还是重新define了一次
+
+#### *update_instance*
+
+将虚机host更新为目标节点，电源状态更新为底层虚机状态等。
+
+```python
+current_power_state = self._get_power_state(context, instance)
+node_name = None
+try:
+    compute_node = self._get_compute_info(context, self.host)
+    node_name = compute_node.hypervisor_hostname
+except exception.ComputeHostNotFound:
+    LOG.exception(_LE('Failed to get compute_info for %s'), self.host)
+finally:
+    instance.host = self.host
+    instance.power_state = current_power_state
+    instance.task_state = None
+    instance.node = node_name
+    instance.save(expected_task_state=task_states.MIGRATING)
+```
+
+### cleanup
+
+包括unplugin_vif、disconnect_volume、destroy_disk、undefine_domain，其中unplugin_vif、disconnect_volume已经在前面执行过一次。
+
+删除虚机/opt/nova/instance/中的数据也是在这里进行的。
+
+清理消息队列中关于该instance的消息、清理consoleauth中用于访问该instance控制台的token。
+

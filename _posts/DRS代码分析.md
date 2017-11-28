@@ -1,0 +1,398 @@
+# DRS代码分析
+
+DRS服务是一个后台定时每一分钟执行一次的循环任务：
+
+1    收集所有计算节点的资源使用情况。
+
+* 收集数据库中存储的compute node中的资源使用情况，如计算节点的vcpu，memroy_used_mb等资源使用情况。
+* 收集计算节点通过monitors收集的信息到DRS服务的内存缓存中。
+* 收集ceilometer相关的数据到DRS内存缓存，现在没有需要收集的。
+
+2    更新DRS策略信息到DRS缓存。
+
+* 主机集合模式查询每一个主机集合的metadata信息，初始化policy的配置信息。
+* 全局模式直接通过配置文件读入policy信息到DRS缓存。
+
+3    循环所有的主机集合，针对主机集合中的所有主机，根据收集的主机数据和配置的策略信息，查看每一个主机是否违反了配置的策略。
+
+4    对于违反了主机集合配置的策略的主机，选择该主机上的资源使用率最低的一个虚拟机。
+
+5    对于该虚拟机，准备相关的调度参数（忽略当前主机，传递主机集合id。），传递请求给nova-scheduler， 请求nova-scheduler选择一批合适的主机。
+
+6    根据nova-scheduler选择的主机列表，对每一个候选主机，检查虚拟机迁移过去以后，主机的资源使用率是否超过策略设置的阈值。选择虚拟机迁移过去后，资源使用最小的主机作为迁移的目标主机。
+
+7    迁移虚拟机到目标主机。
+
+8    检查下一个违反了策略的主机，重复3-7步。
+
+
+
+## 1.服务入口
+
+```python
+#drsstack/cmd/resource_scheduler.py
+import drsstack.openstack.openstack_utils as openstack_utils
+
+def main():
+    manager_cls = 'drsstack.rs.scheduler.manager.ResourceManager'
+    binary = 'nova-rs'
+    topic = 'novars'
+    openstack_utils.create_service(manager=manager_cls,
+                                   binary=binary,
+                                   topic=topic)
+ 
+#drsstack/openstack/openstack_utils.py
+def create_service(binary=None, topic=None, manager=None):
+    nova_config.parse_args(sys.argv)
+    logging.setup(CONF, "nova")
+    utils.monkey_patch()
+    objects.register_all()
+
+    gmr.TextGuruMeditation.setup_autorun(version)
+
+    server = service.Service.create(binary=binary,
+                                    topic=topic,
+                                    manager=manager)
+    service.serve(server)
+    service.wait()
+```
+
+首先调用nova的service框架，创建drs服务，服务启动后会运行manager中的period_task。
+
+这里的manager是`drsstack.rs.scheduler.manager.ResourceManager`，查看该manager：
+
+```python
+#drsstack/rs/scheduler/manager.py
+class ResourceManager(openstack_utils.NovaManager):
+    """Manages the service CRUD operations and triggers the periodic tasks."""
+
+    def __init__(self, *args, **kwargs):
+        super(ResourceManager, self).__init__(*args, **kwargs)
+        self.engine = engine_manager.EngineManager()
+        period_heartbeat_file("resource-scheduler.heartbeat",
+                              CONF.heartbeat_interval_rs)
+        LOG.debug("The engine manager successfully initialized "
+                  "the resource scheduler service.")
+
+    @periodic_task.periodic_task(spacing=CONF.rs_balance_interval)
+    def __periodic_task(self, context):
+        """This task is triggered every 60 seconds."""
+        ctxt = openstack_utils.create_context()
+        self.engine.policy_function(ctxt)
+```
+
+这里的engine是EngineMnager实例，看看该类的定义：
+
+```python
+class EngineManager(object):
+    """A daemon that serves the runtime optimization policy."""
+
+    def __init__(self):
+        self.host_model = host_model.HostModel()
+
+        self.scheduler_rpcapi = SchedulerRpcAPI()
+        self.filter = filter.Filter(self)
+        self._compute_api = ComputeAPI()
+        self._ceilometer_api = CeilometerAPI()
+        self.gnocchi_api = GnocchiAPI()
+        
+        self.aggregate_data = {}
+        self._used_hosts = []
+        self.host_and_count = {}
+        self.cpu_percent_list = {}
+        self.mem_percent_list = {}
+        self.migrating_insts = {}
+```
+
+解释下这里定义的几个列表或字典类型的数据：
+
+### aggregate_data
+
+aggregate_data示例如下：
+
+```json
+{
+  "$agg_id":{
+    "hosts":['compute1', 'compute2'],
+    "policy": {"rs_rule": "cpu_util", "rs_name": "CPU Utilization",
+               "rs_action": "migrate", "rs_max_migration": 5,
+               "rs_threshhold": 70},
+    "host_and_count": {'compute1':1,'compute2':2}
+  },
+  "$agg_id2": {.....}
+}
+```
+
+包括hosts、policy以及host_and_count。
+
+hosts是aggregate中主机列表，policy是该aggregate配置的策略信息，host_and_count是个字典，记录每个主机违反策略次数。
+
+### _used_hosts
+
+列表类型，包括所有正在优化的主机。这些主机上会有一个虚机正在迁移，迁移结束后该主机会从这个列表中移除。
+
+[('host1', 'instance1'), ('host2',  'instance2')]
+
+### host_and_count
+
+self.host_and_count没有用到，用到的是aggregate_data中的 host_and_count。
+
+### cpu_percent_list
+
+记录各个主机最近5次轮询时的cpu使用率，用来计算平均使用率
+
+### mem_percent_list
+
+记录各个主机最近5次轮询时的memory使用率，用来计算平均使用率
+
+### migrating_insts
+
+记录虚拟机迁移的次数。
+
+## 2.收集计算节点资源使用情况
+
+每次轮询执行的是EngineManager的policy_function。
+
+policy_function首先会收集计算节点资源使用情况。
+
+```python
+#drsstack/rs/scheduler/engine_manager.py
+class EngineManager(object):
+    """A daemon that serves the runtime optimization policy."""
+    def __init__(self):
+    self.host_model = host_model.HostModel()
+
+    def policy_function(self, context):
+        self.host_model.update_host_model(self, context)
+```
+
+计算节点资源使用情况作为一个HostModel实例会保存在self.host_model中。
+
+然后每次轮询时都会通过update_host_model方法进行更新。
+
+#### 2.1 获取计算节点作为hypervisor的使用情况
+
+将得到的结果保存在HostState实例中。
+
+```python
+        nodes = self.compute_api.query_compute_nodes(context)
+        self.data = {}
+        for node in nodes:
+            host = HostState()
+            host.uuid = node.uuid
+            host.name = node.hypervisor_hostname
+            host.vcpus = node.vcpus
+            host.free_disk_gb = node.free_disk_gb
+            host.free_ram_mb = node.free_ram_mb
+            host.local_gb = node.local_gb
+            host.local_gb_used = node.local_gb_used
+            host.memory_mb = node.memory_mb
+            host.memory_mb_used = node.memory_mb_used
+            host.running_vms = node.running_vms
+            host.hypervisor_type = node.hypervisor_type
+            host.vcpus_used = node.vcpus_used
+```
+
+#### 2.2 获取各个monitor获取的信息
+
+包括compute monitor和memory monitor，然后将cpu.percent和memory.used与前面4次得到的结果计算出平均值，并将平均值（memory.used做了一次转换）赋给HostState实例，供后面判断虚机是否违规使用。
+
+```python
+            metrics = json.loads(node.metrics)
+            avg_used = 0.0
+            for metric in metrics:
+                name = metric['name']
+                if name == 'cpu.percent':
+                    metric['value'] = metric['value'] * 100
+                    # Caculate the average cpu usage
+                    host_cpu_list = manager.cpu_percent_list.get(host.name, [])
+                    host_cpu_list.append(metric['value'])
+                    if len(host_cpu_list) > constants.METRICS_LIST_LEN:
+                        host_cpu_list.pop(0)
+                    csum = 0.0
+                    for m in host_cpu_list:
+                        csum += m
+                    avg_cpu = csum / len(host_cpu_list)
+                    metric['value'] = avg_cpu
+                    manager.cpu_percent_list[host.name] = host_cpu_list
+                elif name == 'memory.used':
+                    # Caculate the average mem usage in 5 minutes
+                    host_mem_list = manager.mem_percent_list.get(host.name, [])
+                    host_mem_list.append(metric['value'])
+                    if len(host_mem_list) > constants.METRICS_LIST_LEN:
+                        host_mem_list.pop(0)
+                    sum = 0.0
+                    for m in host_mem_list:
+                        sum += m
+                    avg_used = sum / len(host_mem_list)
+                    manager.mem_percent_list[host.name] = host_mem_list
+
+                name = name.replace('.', '_')
+                setattr(host, name, metric['value'])
+
+            host.memory_percent = 100 * avg_used / node.memory_mb if \
+                node.memory_mb else 0.0
+```
+
+## 3.获取策略信息
+
+drs分为global模式和aggregate模式，通过配置文件的enable_global_mode定义，True为global模式，False为aggregate模式。
+
+### 3.1global模式
+
+global模式时，调度范围是环境上的所有计算节点，共用一个策略。
+
+global模式的策略信息是用配置文件读取的。如果没有设置，使用默认策略。
+
+### 3.2aggregate模式
+
+aggregate模式时，每个aggregate使用一种策略，且优化范围仅限于各个aggregate内部。
+
+aggregate的策略信息是通过读取各个aggregate的metadata获取的。如果没有配置，使用默认策略。
+
+## 4.获取所有违规主机
+
+### 4.1筛除正在优化的主机
+
+每一轮执行优化的主机及该主机上执行迁移的虚拟机，都会以（'host1', 'instance1'）这个数据对的方式保存在self._used_hosts中。
+
+在新的轮询过程中，会先将self._used_hosts中迁移已经完成的主机和虚机组剔除掉（通过查询虚拟机的状态）。
+
+self._used_hosts中的主机不会作为这一轮优化的源主机，也不会作为目的主机。
+
+### 4.2获取违规的主机
+
+获取第2章中收集的数据，然后跟设定的阈值比较，若超过阈值，则计数+1。当计数达到设定的值时，表明该主机违规。
+
+若未超过阈值，则计数归0.
+
+```python
+value = eval(rule, self.host_model.data.get(host).__dict__)
+agg_host_and_count = self.aggregate_data[count_agg_id]
+if value > threshhold:
+    host_and_count = agg_host_and_count.get('host_and_count')
+    count = host_and_count.get(host)
+    if not count:
+        host_and_count[host] = 1
+        count = 1
+        self.aggregate_data[count_agg_id]['host_and_count'] = \
+            host_and_count
+    else:
+        count += 1
+        host_and_count[host] = count
+        self.aggregate_data[count_agg_id]['host_and_count'] = \
+            host_and_count
+            
+    if count >= stabilization and count % stabilization == 0:
+    violated_hosts.append(host)
+    
+else:
+    if host in agg_host_and_count['host_and_count']:
+        agg_host_and_count['host_and_count'].pop(host)
+```
+
+获取到所有的违规主机后，会执行一个过滤，将不符合条件的主机剔除。
+
+1.主机在self._used_hosts中时，剔除
+
+2.主机上正在迁移的虚拟机数量超过设定值时，剔除
+
+## 5.为每个违规主机选取候选虚机和候选主机
+
+```python
+for host in violated_hosts:
+	#为主机上的虚机排序
+    instances = self.__get_instances_for compute_node(context, host, policy)
+    for inst in instances:
+        best_possible_host = self.__get_candidate_host(...)
+```
+
+### 5.1对主机上的虚机排序
+
+这里会通过ceilometerapi或gnocchiapi查询虚拟机自身的使用率，然后做一个升序排序。
+
+```python
+def __get_instances_for_compute_node(self, context, host, policy):
+    instances = self._compute_api.query_active_instances(context,
+                                                         hosts=[host])
+    hv_insts = []
+    for inst in instances:
+        # Skip the instance which set the no_drs metadata
+        if inst.metadata.get('no_drs'):
+            continue
+        else:
+            # Skip the instance that exceed the max retry times=3.
+            key = str(inst.uuid + constants.SEPARATOR + inst.host)
+            count = self.migrating_insts.get(key, 0)
+            if count > constants.MAX_RETRY_COUNT:
+                LOG.error('The instance %(name)s exceed the max'
+                          ' retry migrate count %(count)s on'
+                          ' host %(host)s.'
+                          % {'name': inst['display_name'],
+                             'count': constants.MAX_RETRY_COUNT,
+                             'host': inst['host']})
+                continue
+
+        hv_insts.append(inst)
+
+    #排序
+    if policy[constants.RS_RULE] == 'cpu_percent':
+        hv_insts.sort(self.__compare_instance_cpu_load)
+    elif policy[constants.RS_RULE] == 'memory_percent':
+        hv_insts.sort(self.__compare_instance_mem_load)
+    else:
+        hv_insts.sort(self.__compare_instance_cpu_load)
+    return hv_insts
+```
+
+### 5.2选取迁移后使用率最小的主机作为目标主机
+
+先通过scheduler获取所有可迁移的主机，然后计算每个虚机迁移到每个主机上之后各个主机的使用率，选择迁移后使用率最小且小于阈值的那个主机及虚拟机。
+
+会从虚机使用率最小的那个主机开始查询，当为该虚机找到满足要求的主机后，就结束了这个流程，其他虚机不会再执行查询操作了。
+
+这里需要计算虚机迁移到目标主机上后，目标主机资源使用率的变化。
+
+```python
+rule = self.__transform_policy_rule(context, rule, inst)
+value = eval(rule, host_state.__dict__)
+```
+
+这里用到了eval这个方法。这里这个方法有2个参数，rule参数是一个string类型，相当于一个公式；第二个参数是一个字典类，提供公式中的变量。我们以cpu_percent为例看看具体的实现：
+
+```python
+#获取虚机内部cpu使用率，然后转换成百分比
+instance_cpu_ut = self.gnocchi_api.get_instance_ut(
+    instance, constants.CEILOMETER_CPU_UT_KEY)
+instance_cpu_ut = instance_cpu_ut / constants.FIXED_UT_MULTIPLE
+#获取虚机vcpu总数
+instance_total_vcpus = instance['vcpus']
+#获取源主机每个cpu的频率
+host_state = self.host_model.data[instance['host']]
+source_cpu_frequency = host_state. \
+    get(constants.HOST_CPU_FREQUENCY_METRIC_KEY)
+#计算得到虚机占用的cpu频率总数
+instance_total_cpu_frequency = instance_cpu_ut * \
+                               source_cpu_frequency * \
+                               instance_total_vcpus
+instance_total_cpu_frequency = format(instance_total_cpu_frequency,
+                                      '.16f')
+#组合得到公式：
+#cpu.percent + VMut*100/(vcpus*cpu_frequency)
+rule = "".join(["(", constants.CPU_UTILIZATION_METRICS_NAME,
+                "+(", str(instance_total_cpu_frequency),
+                "*100/(vcpus*cpu_frequency)))"])
+```
+
+最后的公式是：cpu.percent + (VMut /(vcpus * cpu_frequency)) * 100。
+
+变量有3个，其中cpu.percent是目标主机当前使用率，vcpus是目标主机vcpus总数，cpu_frequency是目标主机每个cpu的频率。VMut在这个公式中是一个常量，表示虚机占用的cpu频率总数。
+
+`evel(rule, host_state.__dict__)`会从host_state中获取3个变量，计算出结果。
+
+## 6.执行迁移
+
+直接调用热迁移接口
+
+
+
